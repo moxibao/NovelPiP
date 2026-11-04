@@ -1,0 +1,23 @@
+name: NovelPiP
+options:
+  bundleIdPrefix: com.novelpip
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  NovelPiP:
+    type: application
+    platform: iOS
+    sources:
+      - path: NovelPiP
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.novelpip.reader
+        PRODUCT_NAME: NovelPiP
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UIBackgroundModes:
+          - audio
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Not used"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Light
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
