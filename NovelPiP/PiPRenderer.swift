@@ -5,6 +5,7 @@ import CoreText
 
 final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegate {
     private let displayLayer = AVSampleBufferDisplayLayer()
+    private let containerView = UIView()
     private var pipController: AVPictureInPictureController?
     private var pipPossibleObservation: NSKeyValueObservation?
     private var frameNumber: Int64 = 0
@@ -15,8 +16,21 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
 
     override init() {
         super.init()
+
+        // 关键：音频会话必须在 AVPictureInPictureController 初始化之前激活
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .moviePlayback)
+        try? session.setActive(true)
+
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.white.cgColor
+
+        containerView.frame = CGRect(x: 0, y: 0, width: 2, height: 2)
+        containerView.alpha = 0.01
+        containerView.isUserInteractionEnabled = false
+        displayLayer.frame = containerView.bounds
+        containerView.layer.addSublayer(displayLayer)
+
         if AVPictureInPictureController.isPictureInPictureSupported() {
             let source = AVPictureInPictureController.ContentSource(
                 sampleBufferDisplayLayer: displayLayer,
@@ -24,29 +38,47 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
             )
             pipController = AVPictureInPictureController(contentSource: source)
             pipController?.canStartPictureInPictureAutomaticallyFromInline = true
+            PiPDebug.shared.attach(to: pipController)
         }
     }
 
     var isSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
     var isActive: Bool { pipController?.isPictureInPictureActive ?? false }
+    var isPossible: Bool { pipController?.isPictureInPicturePossible ?? false }
 
-    /// 预热：更新内容并激活音频会话，让 PiP 随时可启动。
+    /// 把承载 layer 的隐藏视图挂到当前窗口，确保系统认为内联内容可见。
+    func attachToWindow() {
+        guard let window = Self.activeWindow() else { return }
+        if containerView.superview !== window {
+            containerView.removeFromSuperview()
+            window.addSubview(containerView)
+        }
+    }
+
+    private static func activeWindow() -> UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+    }
+
     func prepare(text: String, onSkip: @escaping (Bool) -> Void) {
         currentText = text
         self.onSkip = onSkip
+        attachToWindow()
         renderFrame()
-        activateAudioSession()
         startRefreshing()
-    }
-
-    func start(text: String, onSkip: @escaping (Bool) -> Void) {
-        prepare(text: text, onSkip: onSkip)
-        requestStart()
+        print("[PiP] prepare 完成, isPossible=\(isPossible)")
     }
 
     func requestStart() {
-        guard let controller = pipController else { return }
-        activateAudioSession()
+        guard let controller = pipController else {
+            print("[PiP] pipController 为 nil")
+            return
+        }
+        attachToWindow()
+
+        print("[PiP] 请求启动, isPossible=\(controller.isPictureInPicturePossible)")
 
         if controller.isPictureInPicturePossible {
             controller.startPictureInPicture()
@@ -56,10 +88,10 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
         pipPossibleObservation = controller.observe(
             \.isPictureInPicturePossible,
             options: [.new]
-        ) { [weak self] c, _ in
+        ) { c, _ in
+            print("[PiP] isPossible 变为 \(c.isPictureInPicturePossible)")
             guard c.isPictureInPicturePossible else { return }
             c.startPictureInPicture()
-            self?.pipPossibleObservation = nil
         }
     }
 
@@ -73,12 +105,6 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
         timer = nil
         pipPossibleObservation = nil
         if isActive { pipController?.stopPictureInPicture() }
-    }
-
-    private func activateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .moviePlayback)
-        try? session.setActive(true)
     }
 
     private func startRefreshing() {
