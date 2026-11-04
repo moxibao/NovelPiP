@@ -9,6 +9,8 @@ final class ReaderModel: ObservableObject {
     @Published var pages: [String] = []
     @Published var isPiPActive = false
     @Published var importError: String?
+    @Published var isImporting = false
+    @Published var pipEnabled = false
 
     private let storageKey = "NovelPiP.books.v2"
 
@@ -28,19 +30,38 @@ final class ReaderModel: ObservableObject {
     init() { loadBooks() }
 
     func importFile(url: URL) {
+        isImporting = true
         let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
 
-        do {
-            let parsed = try BookParser.parse(url: url)
-            var book = Book(title: parsed.title, text: parsed.text, sourceFormat: parsed.format)
-            let paged = paginate(parsed.text)
-            book.chapters = mapChapters(titles: parsed.chapterTitles, text: parsed.text, pages: paged)
-            books.insert(book, at: 0)
-            saveBooks()
-            select(book)
-        } catch {
-            importError = error.localizedDescription
+        Task.detached(priority: .userInitiated) { [weak self] in
+            defer {
+                if access { url.stopAccessingSecurityScopedResource() }
+            }
+
+            do {
+                let parsed = try BookParser.parse(url: url)
+                let paged = await self?.paginate(parsed.text) ?? []
+                let chapters = await self?.mapChapters(
+                    titles: parsed.chapterTitles,
+                    text: parsed.text,
+                    pages: paged
+                ) ?? []
+
+                await MainActor.run {
+                    guard let self else { return }
+                    var book = Book(title: parsed.title, text: parsed.text, sourceFormat: parsed.format)
+                    book.chapters = chapters
+                    self.books.insert(book, at: 0)
+                    self.saveBooks()
+                    self.select(book)
+                    self.isImporting = false
+                }
+            } catch {
+                await MainActor.run {
+                    self?.importError = error.localizedDescription
+                    self?.isImporting = false
+                }
+            }
         }
     }
 
@@ -83,7 +104,7 @@ final class ReaderModel: ObservableObject {
         goToPage(chapter.startPage)
     }
 
-    private func paginate(_ source: String) -> [String] {
+    private nonisolated func paginate(_ source: String) -> [String] {
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -111,7 +132,7 @@ final class ReaderModel: ObservableObject {
         return result.isEmpty ? [""] : result
     }
 
-    private func mapChapters(titles: [String], text: String, pages: [String]) -> [Chapter] {
+    private nonisolated func mapChapters(titles: [String], text: String, pages: [String]) -> [Chapter] {
         guard !titles.isEmpty, !pages.isEmpty else { return [] }
         var pageStartOffsets: [Int] = []
         var offset = 0
