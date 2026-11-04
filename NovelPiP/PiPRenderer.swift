@@ -6,6 +6,7 @@ import CoreText
 final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegate {
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var pipController: AVPictureInPictureController?
+    private var pipPossibleObservation: NSKeyValueObservation?
     private var frameNumber: Int64 = 0
     private var timer: Timer?
     private var currentText = "NovelPiP"
@@ -29,14 +30,37 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
     var isSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
     var isActive: Bool { pipController?.isPictureInPictureActive ?? false }
 
-    func start(text: String, onSkip: @escaping (Bool) -> Void) {
+    /// 预热：更新内容并激活音频会话，让 PiP 随时可启动。
+    func prepare(text: String, onSkip: @escaping (Bool) -> Void) {
         currentText = text
         self.onSkip = onSkip
         renderFrame()
-        if pipController?.isPictureInPicturePossible == true {
-            pipController?.startPictureInPicture()
-        }
+        activateAudioSession()
         startRefreshing()
+    }
+
+    func start(text: String, onSkip: @escaping (Bool) -> Void) {
+        prepare(text: text, onSkip: onSkip)
+        requestStart()
+    }
+
+    func requestStart() {
+        guard let controller = pipController else { return }
+        activateAudioSession()
+
+        if controller.isPictureInPicturePossible {
+            controller.startPictureInPicture()
+            return
+        }
+
+        pipPossibleObservation = controller.observe(
+            \.isPictureInPicturePossible,
+            options: [.new]
+        ) { [weak self] c, _ in
+            guard c.isPictureInPicturePossible else { return }
+            c.startPictureInPicture()
+            self?.pipPossibleObservation = nil
+        }
     }
 
     func update(text: String) {
@@ -47,7 +71,14 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
     func stop() {
         timer?.invalidate()
         timer = nil
+        pipPossibleObservation = nil
         if isActive { pipController?.stopPictureInPicture() }
+    }
+
+    private func activateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .moviePlayback)
+        try? session.setActive(true)
     }
 
     private func startRefreshing() {
@@ -82,9 +113,9 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
         context.setFillColor(UIColor.white.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 13
+        paragraph.lineSpacing = 15
         paragraph.alignment = .left
-        let font = UIFont.systemFont(ofSize: 38, weight: .regular)
+        let font = UIFont.systemFont(ofSize: 34, weight: .regular)
         let attributed = NSAttributedString(string: currentText,
             attributes: [.font: font, .foregroundColor: UIColor.black, .paragraphStyle: paragraph])
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
@@ -118,7 +149,6 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
         }
     }
 
-    // PiP system skip-forward and skip-back events become page-turn events.
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     skipByInterval skipInterval: CMTime,
                                     completion: @escaping () -> Void) {
