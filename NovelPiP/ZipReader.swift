@@ -1,4 +1,5 @@
 import Foundation
+import Compression
 
 /// 极简 ZIP 读取器，依赖系统 zlib，够解 EPUB（store/deflate）。
 final class ZipReader {
@@ -82,25 +83,20 @@ final class ZipReader {
     private func inflate(_ input: Data, expectedSize: Int) -> Data? {
         guard expectedSize > 0 else { return Data() }
         var out = Data(count: expectedSize)
-        var outLen = expectedSize
-        let ok = input.withUnsafeBytes { inPtr -> Bool in
-            guard let inBase = inPtr.bindMemory(to: UInt8.self).baseAddress else { return false }
-            return out.withUnsafeMutableBytes { outPtr -> Bool in
-                guard let outBase = outPtr.bindMemory(to: UInt8.self).baseAddress else { return false }
-                var strm = z_stream()
-                strm.next_in = UnsafeMutablePointer<Bytef>(mutating: inBase)
-                strm.avail_in = uInt(input.count)
-                strm.next_out = outBase
-                strm.avail_out = uInt(outLen)
-                guard inflateInit2_(&strm, -15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return false }
-                let r = inflate(&strm, Z_FINISH)
-                inflateEnd(&strm)
-                outLen = Int(strm.total_out)
-                return r == Z_STREAM_END
+        let written = out.withUnsafeMutableBytes { outPtr -> Int in
+            guard let outBase = outPtr.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            return input.withUnsafeBytes { inPtr -> Int in
+                guard let inBase = inPtr.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_decode_buffer(
+                    outBase, expectedSize,
+                    inBase, input.count,
+                    nil,
+                    COMPRESSION_ZLIB
+                )
             }
         }
-        guard ok else { return nil }
-        return out.prefix(outLen)
+        guard written > 0 else { return nil }
+        return out.prefix(written)
     }
 
     private func readU16(_ offset: Int) -> UInt16 {
