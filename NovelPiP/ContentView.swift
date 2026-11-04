@@ -10,6 +10,8 @@ struct ContentView: View {
     @State private var pip = PiPRenderer()
     @Environment(\.scenePhase) private var scenePhase
 
+    @AppStorage("NovelPiP.pipEnabled") private var pipEnabled = false
+
     private let importTypes: [UTType] = [.plainText, .pdf, .epub]
 
     var body: some View {
@@ -75,12 +77,38 @@ struct ContentView: View {
                    message: { Text(model.importError ?? "") })
         }
         .navigationViewStyle(.stack)
+        .onAppear {
+            if pipEnabled {
+                pip.prepare(text: model.currentPage) { isForward in
+                    DispatchQueue.main.async {
+                        if isForward { model.nextPage() } else { model.previousPage() }
+                        pip.update(text: model.currentPage)
+                    }
+                }
+            }
+        }
         .onChange(of: scenePhase) { phase in
             handleScenePhase(phase)
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            handleWillResignActive()
+        }
         .onChange(of: model.pageIndex) { _ in
-            if model.pipEnabled {
+            if pipEnabled {
                 pip.update(text: model.currentPage)
+            }
+        }
+        .onChange(of: pipEnabled) { enabled in
+            if enabled {
+                pip.prepare(text: model.currentPage) { isForward in
+                    DispatchQueue.main.async {
+                        if isForward { model.nextPage() } else { model.previousPage() }
+                        pip.update(text: model.currentPage)
+                    }
+                }
+                pip.requestStart()
+            } else {
+                pip.stop()
             }
         }
     }
@@ -88,8 +116,7 @@ struct ContentView: View {
     private func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
-            if model.pipEnabled {
-                // 回到前台时结束 PiP，继续在 App 内阅读
+            if pipEnabled {
                 pip.stop()
                 pip.prepare(text: model.currentPage) { isForward in
                     DispatchQueue.main.async {
@@ -99,14 +126,19 @@ struct ContentView: View {
                 }
             }
         case .background:
-            if model.pipEnabled {
-                // 后台时更新一次内容，并请求启动 PiP
+            if pipEnabled {
                 pip.update(text: model.currentPage)
                 pip.requestStart()
             }
         default:
             break
         }
+    }
+
+    private func handleWillResignActive() {
+        guard pipEnabled else { return }
+        pip.update(text: model.currentPage)
+        pip.requestStart()
     }
 
     private var reader: some View {
@@ -149,7 +181,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 16)
 
-            Toggle(isOn: $model.pipEnabled) {
+            Toggle(isOn: $pipEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("画中画阅读").font(.system(size: 15, weight: .medium))
                     Text("打开后划出 App，自动以画中画显示当前页")
@@ -159,18 +191,6 @@ struct ContentView: View {
             }
             .padding(.horizontal, 22)
             .padding(.bottom, 18)
-            .onChange(of: model.pipEnabled) { enabled in
-                if enabled {
-                    pip.prepare(text: model.currentPage) { isForward in
-                        DispatchQueue.main.async {
-                            if isForward { model.nextPage() } else { model.previousPage() }
-                            pip.update(text: model.currentPage)
-                        }
-                    }
-                } else {
-                    pip.stop()
-                }
-            }
         }
     }
 
