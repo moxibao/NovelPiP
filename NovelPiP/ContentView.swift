@@ -26,16 +26,49 @@ struct ContentView: View {
                     }
                 }
             }
-            .fileImporter(isPresented: $showingImporter,
-                          allowedContentTypes: [.plainText, .text],
-                          allowsMultipleSelection: false) { result in
-                guard case .success(let urls) = result, let url = urls.first else { return }
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                if let data = try? Data(contentsOf: url) {
-                    model.importText(data: data, filename: url.lastPathComponent)
-                }
+            .fileImporter(
+    isPresented: $showingImporter,
+    allowedContentTypes: [
+        .plainText,
+        .text,
+        UTType(filenameExtension: "txt") ?? .plainText
+    ],
+    allowsMultipleSelection: false
+) { result in
+    switch result {
+    case .success(let urls):
+        guard let url = urls.first else {
+            return
+        }
+
+        let accessGranted = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted {
+                url.stopAccessingSecurityScopedResource()
             }
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+
+            guard !data.isEmpty else {
+                print("导入失败：文件内容为空")
+                return
+            }
+
+            model.importText(
+                data: data,
+                filename: url.lastPathComponent
+            )
+
+        } catch {
+            print("导入文件失败：\(error.localizedDescription)")
+        }
+
+    case .failure(let error):
+        print("文件选择失败：\(error.localizedDescription)")
+    }
+}
         }
         .navigationViewStyle(.stack)
     }
