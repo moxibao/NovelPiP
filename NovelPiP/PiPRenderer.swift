@@ -121,9 +121,9 @@ final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegat
     // PiP system skip-forward and skip-back events become page-turn events.
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     skipByInterval skipInterval: CMTime,
-                                    completionHandler: @escaping () -> Void) {
+                                    completion: @escaping () -> Void) {
         onSkip?(CMTimeGetSeconds(skipInterval) >= 0)
-        completionHandler()
+        completion()
     }
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
