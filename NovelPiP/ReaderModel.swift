@@ -8,27 +8,51 @@ final class ReaderModel: ObservableObject {
     @Published var pageIndex: Int = 0
     @Published var pages: [String] = []
     @Published var isPiPActive = false
+    @Published var importError: String?
 
-    private let storageKey = "NovelPiP.books.v1"
-    private let progressKey = "NovelPiP.progress.v1"
+    private let storageKey = "NovelPiP.books.v2"
 
     var selectedBook: Book? { books.first { $0.id == selectedBookID } }
     var currentPage: String {
-        guard pages.indices.contains(pageIndex) else { return "请导入一本 TXT 小说" }
+        guard pages.indices.contains(pageIndex) else { return "请导入一本小说" }
         return pages[pageIndex]
+    }
+
+    var currentChapterTitle: String? {
+        guard let book = selectedBook, !book.chapters.isEmpty else { return nil }
+        var result: String?
+        for c in book.chapters where c.startPage <= pageIndex { result = c.title }
+        return result
     }
 
     init() { loadBooks() }
 
-    func importText(data: Data, filename: String) {
-        let text = String(data: data, encoding: .utf8)
-            ?? String(data: data, encoding: .utf16)
-            ?? String(decoding: data, as: UTF8.self)
-        let title = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
-        let book = Book(title: title.isEmpty ? "未命名小说" : title, text: text)
-        books.insert(book, at: 0)
+    func importFile(url: URL) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+
+        do {
+            let parsed = try BookParser.parse(url: url)
+            var book = Book(title: parsed.title, text: parsed.text, sourceFormat: parsed.format)
+            let paged = paginate(parsed.text)
+            book.chapters = mapChapters(titles: parsed.chapterTitles, text: parsed.text, pages: paged)
+            books.insert(book, at: 0)
+            saveBooks()
+            select(book)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    func delete(_ book: Book) {
+        books.removeAll { $0.id == book.id }
+        if selectedBookID == book.id {
+            selectedBookID = nil
+            pages = []
+            pageIndex = 0
+            if let first = books.first { select(first) }
+        }
         saveBooks()
-        select(book)
     }
 
     func select(_ book: Book) {
@@ -55,9 +79,11 @@ final class ReaderModel: ObservableObject {
         saveProgress()
     }
 
+    func goToChapter(_ chapter: Chapter) {
+        goToPage(chapter.startPage)
+    }
+
     private func paginate(_ source: String) -> [String] {
-        // Conservative character-based pagination. The PiP renderer uses a fixed
-        // 720x405 canvas; page length can be tuned after device testing.
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -85,6 +111,27 @@ final class ReaderModel: ObservableObject {
         return result.isEmpty ? [""] : result
     }
 
+    private func mapChapters(titles: [String], text: String, pages: [String]) -> [Chapter] {
+        guard !titles.isEmpty, !pages.isEmpty else { return [] }
+        var pageStartOffsets: [Int] = []
+        var offset = 0
+        for p in pages {
+            pageStartOffsets.append(offset)
+            offset += p.count
+        }
+        var chapters: [Chapter] = []
+        var searchFrom = text.startIndex
+        for t in titles {
+            guard let r = text.range(of: t, range: searchFrom..<text.endIndex) else { continue }
+            let charOffset = text.distance(from: text.startIndex, to: r.lowerBound)
+            var page = 0
+            for (i, off) in pageStartOffsets.enumerated() where off <= charOffset { page = i }
+            chapters.append(Chapter(title: t, startPage: page))
+            searchFrom = r.upperBound
+        }
+        return chapters
+    }
+
     private func loadBooks() {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode([Book].self, from: data) else { return }
@@ -99,9 +146,9 @@ final class ReaderModel: ObservableObject {
     }
 
     private func saveProgress() {
-        guard let id = selectedBookID, let index = pages.isEmpty ? nil : Optional(pageIndex),
+        guard let id = selectedBookID,
               let bookIndex = books.firstIndex(where: { $0.id == id }) else { return }
-        books[bookIndex].pageIndex = index
+        books[bookIndex].pageIndex = pageIndex
         saveBooks()
     }
 }
