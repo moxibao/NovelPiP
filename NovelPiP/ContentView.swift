@@ -6,28 +6,48 @@ struct ContentView: View {
     @StateObject private var model = ReaderModel()
     @State private var showingImporter = false
     @State private var showingTOC = false
+    @State private var showingLibrary = false
     @State private var pip = PiPRenderer()
+    @Environment(\.scenePhase) private var scenePhase
 
     private let importTypes: [UTType] = [.plainText, .pdf, .epub]
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                if model.selectedBook != nil {
-                    reader
-                } else {
-                    emptyState
+            ZStack {
+                VStack(spacing: 0) {
+                    if model.selectedBook != nil {
+                        reader
+                    } else {
+                        emptyState
+                    }
+                    if !model.books.isEmpty { bookshelf }
                 }
-                if !model.books.isEmpty { bookshelf }
+                .background(Color.white)
+
+                if model.isImporting {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("正在导入…").font(.system(size: 13))
+                    }
+                    .padding(24)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
             }
-            .background(Color.white)
             .navigationTitle("NovelPiP")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button { showingTOC = true } label: {
-                        Image(systemName: "list.bullet")
+                    HStack(spacing: 14) {
+                        Button { showingLibrary = true } label: {
+                            Image(systemName: "books.vertical")
+                        }
+                        Button { showingTOC = true } label: {
+                            Image(systemName: "list.bullet")
+                        }
+                        .disabled(model.selectedBook?.chapters.isEmpty ?? true)
                     }
-                    .disabled(model.selectedBook?.chapters.isEmpty ?? true)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showingImporter = true } label: {
@@ -43,6 +63,9 @@ struct ContentView: View {
             .sheet(isPresented: $showingTOC) {
                 TOCView(model: model)
             }
+            .sheet(isPresented: $showingLibrary) {
+                LibraryView(model: model)
+            }
             .alert("导入失败",
                    isPresented: Binding(
                     get: { model.importError != nil },
@@ -52,6 +75,38 @@ struct ContentView: View {
                    message: { Text(model.importError ?? "") })
         }
         .navigationViewStyle(.stack)
+        .onChange(of: scenePhase) { phase in
+            handleScenePhase(phase)
+        }
+        .onChange(of: model.pageIndex) { _ in
+            if model.pipEnabled {
+                pip.update(text: model.currentPage)
+            }
+        }
+    }
+
+    private func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            if model.pipEnabled {
+                // 回到前台时结束 PiP，继续在 App 内阅读
+                pip.stop()
+                pip.prepare(text: model.currentPage) { isForward in
+                    DispatchQueue.main.async {
+                        if isForward { model.nextPage() } else { model.previousPage() }
+                        pip.update(text: model.currentPage)
+                    }
+                }
+            }
+        case .background:
+            if model.pipEnabled {
+                // 后台时更新一次内容，并请求启动 PiP
+                pip.update(text: model.currentPage)
+                pip.requestStart()
+            }
+        default:
+            break
+        }
     }
 
     private var reader: some View {
@@ -94,21 +149,28 @@ struct ContentView: View {
             }
             .padding(.vertical, 16)
 
-            Button {
-                pip.start(text: model.currentPage) { isForward in
-                    DispatchQueue.main.async {
-                        if isForward { model.nextPage() } else { model.previousPage() }
-                        pip.update(text: model.currentPage)
-                    }
+            Toggle(isOn: $model.pipEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("画中画阅读").font(.system(size: 15, weight: .medium))
+                    Text("打开后划出 App，自动以画中画显示当前页")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
-            } label: {
-                Label("进入画中画阅读", systemImage: "pip")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Color.black).clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .padding(.horizontal, 22).padding(.bottom, 18)
+            .padding(.horizontal, 22)
+            .padding(.bottom, 18)
+            .onChange(of: model.pipEnabled) { enabled in
+                if enabled {
+                    pip.prepare(text: model.currentPage) { isForward in
+                        DispatchQueue.main.async {
+                            if isForward { model.nextPage() } else { model.previousPage() }
+                            pip.update(text: model.currentPage)
+                        }
+                    }
+                } else {
+                    pip.stop()
+                }
+            }
         }
     }
 
@@ -195,5 +257,42 @@ struct TOCView: View {
         var start = -1
         for c in chapters where c.startPage <= model.pageIndex { start = c.startPage }
         return start
+    }
+}
+
+struct LibraryView: View {
+    @ObservedObject var model: ReaderModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(model.books) { book in
+                    Button {
+                        model.select(book)
+                        dismiss()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(book.title).foregroundColor(.primary)
+                            Text("进度：第 \(book.pageIndex + 1) 页 · \(book.sourceFormat.uppercased())")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            model.delete(book)
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("书库")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
     }
 }
