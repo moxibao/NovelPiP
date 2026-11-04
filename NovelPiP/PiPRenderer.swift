@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import AVKit
 import CoreText
 
 final class PiPRenderer: NSObject, AVPictureInPictureSampleBufferPlaybackDelegate {
