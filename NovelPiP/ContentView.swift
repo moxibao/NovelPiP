@@ -28,11 +28,7 @@ struct ContentView: View {
             }
             .fileImporter(
     isPresented: $showingImporter,
-    allowedContentTypes: [
-        .plainText,
-        .text,
-        UTType(filenameExtension: "txt") ?? .plainText
-    ],
+   allowedContentTypes: [.item],
     allowsMultipleSelection: false
 ) { result in
     switch result {
