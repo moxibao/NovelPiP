@@ -8,11 +8,7 @@ struct ContentView: View {
     @State private var showingTOC = false
     @State private var pip = PiPRenderer()
 
-    private var allowedTypes: [UTType] {
-        var types: [UTType] = [.plainText, .pdf, .epub]
-        if let t = UTType(filenameExtension: "txt") { types.append(t) }
-        return Array(Set(types))
-    }
+    private let importTypes: [UTType] = [.plainText, .pdf, .epub]
 
     var body: some View {
         NavigationView {
@@ -39,17 +35,9 @@ struct ContentView: View {
                     }
                 }
             }
-            .fileImporter(
-                isPresented: $showingImporter,
-                allowedContentTypes: allowedTypes,
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
+            .sheet(isPresented: $showingImporter) {
+                DocumentPicker(contentTypes: importTypes) { url in
                     model.importFile(url: url)
-                case .failure(let error):
-                    model.importError = error.localizedDescription
                 }
             }
             .sheet(isPresented: $showingTOC) {
