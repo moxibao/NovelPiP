@@ -10,7 +10,6 @@ final class ReaderModel: ObservableObject {
     @Published var isPiPActive = false
     @Published var importError: String?
     @Published var isImporting = false
-    @Published var pipEnabled = false
 
     private let storageKey = "NovelPiP.books.v2"
 
